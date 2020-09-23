@@ -7,20 +7,23 @@ from tqdm import tqdm
 from IdConverterMFL import id_converter
 import csv
 import os
+import sqlite3
+
 
 class mfl_service:
 
     def __init__(self, update_player_converter=False):
         # initialize id converter
-        self.id_to_player_converter = id_converter(update=update_player_converter)
+        self.id_to_player_converter = id_converter(
+            update=update_player_converter)
         self.num_trades_collected = 0
-
 
     def get_dynasty_league_ids(self):
         # be nice to MFL servers
         time.sleep(2)
 
-        page = requests.get("http://www03.myfantasyleague.com/2017/index?YEAR=2017&SEARCH=dynasty&submit=Go")
+        page = requests.get(
+            "http://www03.myfantasyleague.com/2020/index?YEAR=2020&SEARCH=dynasty&submit=Go")
 
         # check that page downloaded correctly
         if str(page.status_code)[0] != str(2):
@@ -33,15 +36,22 @@ class mfl_service:
             if 'Dynasty' in league_string:
                 id = league_string.split("/")[5].split("\\")[0]
                 league_id_list.append(id)
-        return league_id_list
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
 
+        def data_entry():
+            for item in league_id_list:
+                c.execute("INSERT INTO leagues(league_id) VALUES (?)", (item,))
+            conn.commit()
+        data_entry()
+        # return league_id_list
 
     def make_trade_side_list(self, trade, side, convert_to_player=True):
         # can get errors and pass string when should be dict
         if isinstance(trade, str):
-            #print('Lost another one')
+            # print('Lost another one')
             return
-            #trade = json.loads(trade)
+            # trade = json.loads(trade)
 
         # get players involed in trade as list
         side1_players = trade[side].split(",")
@@ -51,14 +61,14 @@ class mfl_service:
 
         # convert id to players
         if convert_to_player:
-            side1_players = self.id_to_player_converter.convert_trade(side1_players)
+            side1_players = self.id_to_player_converter.convert_trade(
+                side1_players)
         return side1_players
-
 
     def get_league_trades(self, league_id, year, csv_writer=None):
         '''
         Finds all trades in league.  Should return real name of playesr?
-        
+
         :param league_id: league id to gather trade data from
         :return: list of all trades in league
         '''
@@ -74,15 +84,17 @@ class mfl_service:
             print('Error downloading:', league_id)
             return
 
-        #trades_dict = load_obj('trade_dict') # for easy testing
+        # trades_dict = load_obj('trade_dict') # for easy testing
         trade_data = []
 
         # make sure transaction exists
         if 'transactions' in trades_dict and 'transaction' in trades_dict['transactions']:
             for trade in trades_dict['transactions']['transaction']:
                 # get players in trade, split into list, convert to real name
-                side1_players = self.make_trade_side_list(trade, 'franchise1_gave_up')
-                side2_players = self.make_trade_side_list(trade, 'franchise2_gave_up')
+                side1_players = self.make_trade_side_list(
+                    trade, 'franchise1_gave_up')
+                side2_players = self.make_trade_side_list(
+                    trade, 'franchise2_gave_up')
 
                 # make sure neither side is empty
                 if side1_players is None or side2_players is None:
@@ -93,7 +105,8 @@ class mfl_service:
                     continue
 
                 timestamp = int(trade['timestamp'])
-                single_trade = [side1_players, side2_players, timestamp, league_id]
+                single_trade = [side1_players,
+                                side2_players, timestamp, league_id]
 
                 trade_data.append(single_trade)
 
@@ -103,9 +116,14 @@ class mfl_service:
         print(len(trade_data), ", Total:", self.num_trades_collected)
         return trade_data
 
-
-    def get_multiple_leagues_trades(self, league_list, save_path, year=2017, disable_progess_bar=False):
+    def get_multiple_leagues_trades(self, save_path, year=2020, disable_progess_bar=False):
         all_trades = []
+        con = sqlite3.connect("database.db")
+        cursor = con.cursor()
+        query = "SELECT league_id FROM leagues"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        league_list = [row[0] for row in rows]
         with open(save_path, "w") as csv_file:
             writer = csv.writer(csv_file, delimiter=',')
             writer.writerow(["player1", "player2", "time", "league_id"])
@@ -113,10 +131,10 @@ class mfl_service:
                 all_trades.append(self.get_league_trades(league, year, writer))
         return all_trades
 
-
     def get_scoring_rules(league_id):
         # load league rules as json
-        league_scoring_url = "http://www59.myfantasyleague.com/2017/export?TYPE=rules&L=" + league_id + "&W=&JSON=1"
+        league_scoring_url = "http://www59.myfantasyleague.com/2017/export?TYPE=rules&L=" + \
+            league_id + "&W=&JSON=1"
         scoring_rules = requests.get(league_scoring_url)
         scoring_rules_json = json.loads(scoring_rules.content.decode('utf-8'))
 
@@ -125,19 +143,18 @@ class mfl_service:
         rules['ppr'] = scoring_rules_json['rules']['positionRules'][1]['rule'][14]['points']['$t']
         print(rules['ppr'])
 
-
     def get_starter_rules(self, league_id):
-        league_rules_url = "http://www59.myfantasyleague.com/2017/export?TYPE=league&L=" + league_id + "&W=&JSON=1"
+        league_rules_url = "http://www59.myfantasyleague.com/2017/export?TYPE=league&L=" + \
+            league_id + "&W=&JSON=1"
         league_rules = requests.get(league_rules_url)
 
-        #soup_rules = BeautifulSoup(league_rules.content, 'html.parser')
+        # soup_rules = BeautifulSoup(league_rules.content, 'html.parser')
         rules_dict = json.loads(league_rules.text)
 
         league__single_rules = {}
         num_qbs = rules_dict['league']['starters']['position'][0]['limit']
         league__single_rules['num_qbs'] = num_qbs
         return league__single_rules
-
 
     def get_leagues_rules(self, SAVE_PATH, league_ids, update_all=False, disable_progress_bar=False):
 
